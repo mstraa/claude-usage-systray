@@ -3,6 +3,7 @@ import Foundation
 enum UsageError: LocalizedError, Equatable {
     case noCredentials(String)
     case unauthorized
+    case rateLimited(retryAfter: TimeInterval?)
     case httpStatus(Int)
     case transport(String)
     case decoding(String)
@@ -13,6 +14,8 @@ enum UsageError: LocalizedError, Equatable {
             return detail
         case .unauthorized:
             return "Sign-in expired. Open Claude Code to refresh it."
+        case .rateLimited:
+            return "Rate limited by the usage API."
         case .httpStatus(let code):
             return "Anthropic API returned HTTP \(code)."
         case .transport(let detail):
@@ -25,7 +28,7 @@ enum UsageError: LocalizedError, Equatable {
     /// Whether retrying on the next poll could plausibly succeed without the user acting.
     var isTransient: Bool {
         switch self {
-        case .transport, .httpStatus: return true
+        case .transport, .httpStatus, .rateLimited: return true
         case .noCredentials, .unauthorized, .decoding: return false
         }
     }
@@ -93,6 +96,13 @@ enum UsageAPI {
         }
         if http.statusCode == 401 || http.statusCode == 403 {
             throw UsageError.unauthorized
+        }
+        if http.statusCode == 429 {
+            // This endpoint sends `retry-after: 0`, which would mean "retry immediately" and
+            // is worse than useless, so only a positive value is passed on; the caller backs
+            // off on its own otherwise.
+            let retryAfter = (http.value(forHTTPHeaderField: "Retry-After")).flatMap(TimeInterval.init)
+            throw UsageError.rateLimited(retryAfter: retryAfter.map { $0 > 0 ? $0 : nil } ?? nil)
         }
         guard (200..<300).contains(http.statusCode) else {
             throw UsageError.httpStatus(http.statusCode)

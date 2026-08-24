@@ -2,11 +2,19 @@ import Foundation
 
 enum Format {
 
+    /// The API reports the same logical reset as both "09:00:00.216" and "08:59:59.628" on
+    /// different calls, so truncating renders an 11h reset as "10h59". Rounding to the
+    /// nearest minute keeps that jitter invisible; sub-second precision is meaningless here.
+    static func roundedToMinute(_ date: Date) -> Date {
+        Date(timeIntervalSinceReferenceDate:
+                (date.timeIntervalSinceReferenceDate / 60).rounded() * 60)
+    }
+
     /// 24-hour clock in the French style: "17h" on the hour, "17h23" otherwise.
     /// Always 24-hour regardless of the system's 12/24 preference, since the components are
     /// read directly rather than run through a locale-driven formatter.
     static func clock(_ date: Date, calendar: Calendar = .current) -> String {
-        let parts = calendar.dateComponents([.hour, .minute], from: date)
+        let parts = calendar.dateComponents([.hour, .minute], from: roundedToMinute(date))
         let hour = parts.hour ?? 0
         let minute = parts.minute ?? 0
         return minute == 0 ? "\(hour)h" : String(format: "%dh%02d", hour, minute)
@@ -19,7 +27,10 @@ enum Format {
     }()
 
     /// "at 17h", "tomorrow at 9h", "Wed 26 at 9h" — the day is only named when it is not today.
-    static func resetPhrase(_ date: Date, now: Date = Date(), calendar: Calendar = .current) -> String {
+    static func resetPhrase(_ rawDate: Date, now: Date = Date(), calendar: Calendar = .current) -> String {
+        // Rounded before the day comparison, so a 23:59:59.6 reset cannot be labelled today
+        // while its clock reads 0h.
+        let date = roundedToMinute(rawDate)
         let time = clock(date, calendar: calendar)
         if calendar.isDate(date, inSameDayAs: now) {
             return "at \(time)"

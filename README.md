@@ -23,7 +23,10 @@ Times use a 24-hour clock: `19h` on the hour, `19h23` otherwise.
   Once the 5-hour window has provably rolled over with no successful refresh, the label falls back
   to `—` rather than showing a number that is now wrong.
 - **Launch at login**, via `SMAppService`.
-- No Dock icon, no window, no preferences file. It polls every 60 seconds and on dropdown open.
+- No Dock icon, no window, no preferences file.
+- **Gentle on the API:** polls every 5 minutes, backs off exponentially (up to 30 minutes) when
+  the endpoint returns `429`, and refreshes on demand from the dropdown. The usage endpoint
+  rate-limits aggressively and Claude Code polls it too, so the app is deliberately unhurried.
 
 ## Requirements
 

@@ -43,6 +43,15 @@ struct DropdownView: View {
         .onAppear { syncLoginItemState(clearingError: true) }
     }
 
+    /// A bare error reads as permanent. Naming the next attempt shows it is being handled.
+    private func errorDetail(_ error: UsageError) -> String {
+        var text = error.localizedDescription
+        if store.nextFetchAt > Date() {
+            text += " Retrying \(Format.relative(to: store.nextFetchAt))."
+        }
+        return text
+    }
+
     private func syncLoginItemState(clearingError: Bool) {
         if clearingError { loginItemError = nil }
         launchAtLogin = LoginItem.isEnabled
@@ -56,7 +65,7 @@ struct DropdownView: View {
             Text("Claude Usage")
                 .font(.system(size: 13, weight: .semibold))
             Spacer()
-            Button(action: { store.refresh() }) {
+            Button(action: { store.refresh(force: true) }) {
                 Image(systemName: "arrow.clockwise")
                     .font(.system(size: 11, weight: .medium))
                     .opacity(store.isRefreshing ? 0.35 : 1)
@@ -115,10 +124,11 @@ struct DropdownView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(store.snapshot == nil ? "Can't read usage" : "Showing last known values")
                     .font(.system(size: 11, weight: .medium))
-                Text(error.localizedDescription)
+                Text(errorDetail(error))
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                    .id(store.clockTick)
             }
             Spacer(minLength: 0)
         }
