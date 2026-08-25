@@ -17,11 +17,14 @@ final class UsageStore: ObservableObject {
     /// Bumped on a timer so relative times ("in 2h13m") re-render without a network call.
     @Published private(set) var clockTick = 0
 
-    /// Deliberately unhurried. The endpoint rate-limits hard — a 60s poll exhausted it and
-    /// stayed 429 through five minutes of silence — and Claude Code polls the same endpoint
-    /// on the same account, so this app's requests are additive. Usage percentages only move
-    /// when Claude is actually used, so minutes of staleness cost nothing.
-    static let pollInterval: TimeInterval = 300
+    /// Background cadence, deliberately slow. The endpoint rate-limits hard: a 60s poll
+    /// exhausted it, and even a 5-minute poll (12 requests/hour) tripped it again overnight.
+    /// Claude Code polls the same endpoint on the same account, so this app's requests are
+    /// additive. Freshness comes from `onDemandFreshness` instead, which costs a request only
+    /// when the user is actually looking.
+    static let pollInterval: TimeInterval = 900
+    /// Opening the dropdown refetches only if the figures are older than this.
+    static let onDemandFreshness: TimeInterval = 120
     /// Ceiling for the exponential backoff after repeated failures.
     static let maxBackoff: TimeInterval = 1800
     /// Floor between user-initiated refreshes, so holding the button cannot hammer the API.
@@ -33,8 +36,25 @@ final class UsageStore: ObservableObject {
     private var inFlight: Task<Void, Never>?
     private var consecutiveFailures = 0
     private var lastAttemptAt: Date?
+    /// Hard gate after a failure: nothing fetches before this, not even the user, because
+    /// extra requests at a rate-limited endpoint only prolong the block.
+    private var backoffUntil = Date.distantPast
+    /// The normal background cadence, which the on-demand paths are allowed to pre-empt.
+    private var nextScheduledFetch = Date.distantPast
+
+    enum RefreshTrigger {
+        /// The background timer.
+        case scheduled
+        /// The dropdown was opened — fetch only if the figures are not already fresh.
+        case onDemand
+        /// The refresh button.
+        case manual
+    }
 
     var isStale: Bool { lastError != nil && snapshot != nil }
+    /// True while a failure backoff is still in force, so the UI can explain why the refresh
+    /// button is inert rather than appearing to ignore the click.
+    var isBackingOff: Bool { Date() < backoffUntil }
 
     deinit {
         tickTimer?.invalidate()
@@ -49,15 +69,18 @@ final class UsageStore: ObservableObject {
             snapshot = saved.snapshot
             consecutiveFailures = saved.consecutiveFailures
             nextFetchAt = saved.nextFetchAt
+            nextScheduledFetch = saved.nextFetchAt
+            // Only a prior failure justifies gating the user out; a merely-due schedule does not.
+            backoffUntil = saved.consecutiveFailures > 0 ? saved.nextFetchAt : .distantPast
             // Restored figures are from a previous run and not yet re-verified, so they are
             // presented as last-known rather than live until a fetch actually succeeds.
             if saved.snapshot != nil {
                 lastError = .staleCache
             }
         }
-        // Relaunching must not punch through an active backoff, or quitting and reopening
-        // becomes a way to hammer a rate-limited endpoint.
-        refresh(force: Date() >= nextFetchAt)
+        // `.onDemand` rather than a forced fetch: relaunching must not punch through an
+        // active backoff, or quitting and reopening becomes a way to hammer the endpoint.
+        refresh(.onDemand)
         // One steady ticker drives both the countdown text and the fetch schedule, so a
         // backoff never has to reschedule a timer.
         let timer = Timer(timeInterval: Self.tickInterval, repeats: true) { [weak self] _ in
@@ -72,17 +95,20 @@ final class UsageStore: ObservableObject {
         tickTimer = timer
     }
 
-    /// - Parameter force: bypass the backoff schedule for an explicit user request. Still
-    ///   subject to `manualRefreshFloor`, since forcing more requests at a rate-limited
-    ///   endpoint only prolongs the block.
-    func refresh(force: Bool = false) {
+    func refresh(_ trigger: RefreshTrigger = .scheduled) {
         guard inFlight == nil else { return }
 
         let now = Date()
-        if force {
+        // No trigger may punch through an active backoff.
+        guard now >= backoffUntil else { return }
+
+        switch trigger {
+        case .scheduled:
+            guard now >= nextScheduledFetch else { return }
+        case .onDemand:
+            if let snapshot, now.timeIntervalSince(snapshot.fetchedAt) < Self.onDemandFreshness { return }
+        case .manual:
             if let last = lastAttemptAt, now.timeIntervalSince(last) < Self.manualRefreshFloor { return }
-        } else if now < nextFetchAt {
-            return
         }
 
         lastAttemptAt = now
@@ -111,13 +137,17 @@ final class UsageStore: ObservableObject {
             self.snapshot = snapshot
             lastError = nil
             consecutiveFailures = 0
-            nextFetchAt = Date().addingTimeInterval(Self.pollInterval)
+            backoffUntil = .distantPast
+            nextScheduledFetch = Date().addingTimeInterval(Self.pollInterval)
+            nextFetchAt = nextScheduledFetch
 
         case .failure(let error):
             let usageError = (error as? UsageError) ?? .transport(error.localizedDescription)
             lastError = usageError
             consecutiveFailures += 1
-            nextFetchAt = Date().addingTimeInterval(backoffDelay(for: usageError))
+            backoffUntil = Date().addingTimeInterval(backoffDelay(for: usageError))
+            nextScheduledFetch = backoffUntil
+            nextFetchAt = backoffUntil
         }
         persist()
     }

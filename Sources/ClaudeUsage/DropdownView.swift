@@ -65,14 +65,16 @@ struct DropdownView: View {
             Text("Claude Usage")
                 .font(.system(size: 13, weight: .semibold))
             Spacer()
-            Button(action: { store.refresh(force: true) }) {
+            Button(action: { store.refresh(.manual) }) {
                 Image(systemName: "arrow.clockwise")
                     .font(.system(size: 11, weight: .medium))
-                    .opacity(store.isRefreshing ? 0.35 : 1)
+                    .opacity(store.isRefreshing || store.isBackingOff ? 0.35 : 1)
             }
             .buttonStyle(.plain)
-            .disabled(store.isRefreshing)
-            .help("Refresh now")
+            .disabled(store.isRefreshing || store.isBackingOff)
+            .help(store.isBackingOff
+                  ? "Waiting out a rate limit — next attempt \(Format.relative(to: store.nextFetchAt))"
+                  : "Refresh now")
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)

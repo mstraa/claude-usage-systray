@@ -27,9 +27,11 @@ Times use a 24-hour clock: `19h` on the hour, `19h23` otherwise.
   numbers immediately instead of a blank menu bar while the first fetch is in flight — or
   failing. The cache holds percentages and timestamps only, never a credential.
 - No Dock icon and no window.
-- **Gentle on the API:** polls every 5 minutes, backs off exponentially (up to 30 minutes) when
-  the endpoint returns `429`, and refreshes on demand from the dropdown. The usage endpoint
-  rate-limits aggressively and Claude Code polls it too, so the app is deliberately unhurried.
+- **Gentle on the API:** polls every 15 minutes in the background, and refetches when you open
+  the dropdown only if the figures are more than 2 minutes old — so freshness costs a request
+  when you are actually looking, not around the clock. On `429` it backs off exponentially up to
+  30 minutes and honours `Retry-After`. The usage endpoint rate-limits aggressively and Claude
+  Code polls it on the same account, so this app is deliberately unhurried.
 
 ## Requirements
 

@@ -201,7 +201,7 @@ final class StatusItemController {
     private func showPopover() {
         guard let button = statusItem.button else { return }
 
-        store.refresh()
+        store.refresh(.onDemand)
 
         // An accessory app can only activate itself from inside a user event; called from a
         // timer this silently fails and the popover's controls stay unresponsive.
