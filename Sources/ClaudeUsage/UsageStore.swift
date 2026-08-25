@@ -80,7 +80,11 @@ final class UsageStore: ObservableObject {
         }
         // `.onDemand` rather than a forced fetch: relaunching must not punch through an
         // active backoff, or quitting and reopening becomes a way to hammer the endpoint.
-        refresh(.onDemand)
+        // `.scheduled`, not `.onDemand`: a launch is not someone looking at the dropdown, so
+        // it must obey the normal cadence. Otherwise every restart buys a free request, and a
+        // crash-restart loop becomes a request storm. This still fetches immediately when the
+        // app has been closed long enough for the schedule to have come due.
+        refresh(.scheduled)
         // One steady ticker drives both the countdown text and the fetch schedule, so a
         // backoff never has to reschedule a timer.
         let timer = Timer(timeInterval: Self.tickInterval, repeats: true) { [weak self] _ in
