@@ -3,7 +3,7 @@ import Foundation
 // MARK: - Severity
 
 /// How close a limit is to being exhausted. Drives the menu bar colour.
-enum Severity: Int, Comparable {
+enum Severity: Int, Comparable, Codable {
     case normal = 0
     case warning = 1
     case critical = 2
@@ -37,7 +37,7 @@ enum Severity: Int, Comparable {
 // MARK: - Presentation model
 
 /// One rate-limit window, normalised for display.
-struct LimitInfo: Identifiable, Equatable {
+struct LimitInfo: Identifiable, Equatable, Codable {
     let id: String
     /// Human label, e.g. "Session", "All models", "Fable".
     let label: String
@@ -50,7 +50,7 @@ struct LimitInfo: Identifiable, Equatable {
 }
 
 /// A complete, normalised view of the usage endpoint's response.
-struct UsageSnapshot: Equatable {
+struct UsageSnapshot: Equatable, Codable {
     /// The rolling 5-hour window.
     var session: LimitInfo?
     /// The 7-day window across all models.

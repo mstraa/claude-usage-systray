@@ -4,6 +4,8 @@ enum UsageError: LocalizedError, Equatable {
     case noCredentials(String)
     case unauthorized
     case rateLimited(retryAfter: TimeInterval?)
+    /// Not a failure: figures restored from disk that have not been re-verified yet.
+    case staleCache
     case httpStatus(Int)
     case transport(String)
     case decoding(String)
@@ -16,6 +18,8 @@ enum UsageError: LocalizedError, Equatable {
             return "Sign-in expired. Open Claude Code to refresh it."
         case .rateLimited:
             return "Rate limited by the usage API."
+        case .staleCache:
+            return "Saved from the previous run."
         case .httpStatus(let code):
             return "Anthropic API returned HTTP \(code)."
         case .transport(let detail):
@@ -28,7 +32,7 @@ enum UsageError: LocalizedError, Equatable {
     /// Whether retrying on the next poll could plausibly succeed without the user acting.
     var isTransient: Bool {
         switch self {
-        case .transport, .httpStatus, .rateLimited: return true
+        case .transport, .httpStatus, .rateLimited, .staleCache: return true
         case .noCredentials, .unauthorized, .decoding: return false
         }
     }

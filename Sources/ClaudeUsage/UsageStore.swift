@@ -42,7 +42,22 @@ final class UsageStore: ObservableObject {
     }
 
     func start() {
-        refresh(force: true)
+        // Restore before the first fetch: a cold start that cannot reach the API — which is
+        // exactly what a rate limit or a crash-restart produces — would otherwise leave the
+        // user with no numbers at all.
+        if let saved = StateStore.load() {
+            snapshot = saved.snapshot
+            consecutiveFailures = saved.consecutiveFailures
+            nextFetchAt = saved.nextFetchAt
+            // Restored figures are from a previous run and not yet re-verified, so they are
+            // presented as last-known rather than live until a fetch actually succeeds.
+            if saved.snapshot != nil {
+                lastError = .staleCache
+            }
+        }
+        // Relaunching must not punch through an active backoff, or quitting and reopening
+        // becomes a way to hammer a rate-limited endpoint.
+        refresh(force: Date() >= nextFetchAt)
         // One steady ticker drives both the countdown text and the fetch schedule, so a
         // backoff never has to reschedule a timer.
         let timer = Timer(timeInterval: Self.tickInterval, repeats: true) { [weak self] _ in
@@ -104,6 +119,13 @@ final class UsageStore: ObservableObject {
             consecutiveFailures += 1
             nextFetchAt = Date().addingTimeInterval(backoffDelay(for: usageError))
         }
+        persist()
+    }
+
+    private func persist() {
+        StateStore.save(PersistedState(snapshot: snapshot,
+                                       nextFetchAt: nextFetchAt,
+                                       consecutiveFailures: consecutiveFailures))
     }
 
     /// Exponential backoff from the poll interval. Without this a rate-limited endpoint is

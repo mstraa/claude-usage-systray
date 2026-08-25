@@ -23,7 +23,10 @@ Times use a 24-hour clock: `19h` on the hour, `19h23` otherwise.
   Once the 5-hour window has provably rolled over with no successful refresh, the label falls back
   to `—` rather than showing a number that is now wrong.
 - **Launch at login**, via `SMAppService`.
-- No Dock icon, no window, no preferences file.
+- **Survives restarts:** the last figures are cached to disk, so a relaunch shows the previous
+  numbers immediately instead of a blank menu bar while the first fetch is in flight — or
+  failing. The cache holds percentages and timestamps only, never a credential.
+- No Dock icon and no window.
 - **Gentle on the API:** polls every 5 minutes, backs off exponentially (up to 30 minutes) when
   the endpoint returns `429`, and refreshes on demand from the dropdown. The usage endpoint
   rate-limits aggressively and Claude Code polls it too, so the app is deliberately unhurried.
@@ -141,12 +144,22 @@ identifier, so if you move the app after enabling it, uncheck the box first, mov
 If macOS says it needs approval, enable **Claude Usage** under
 System Settings › General › Login Items.
 
+## Where it stores things
+
+`~/Library/Application Support/ClaudeUsage/state.json` — the last snapshot and the retry
+schedule. Delete it to reset; the app recreates it. Nothing else is written, and no credential
+is ever stored.
+
 ## Notes
 
 - `spctl -a -vv` reports "rejected" for this app. That is expected for any ad-hoc-signed binary and
   does not block launching — Gatekeeper only blocks apps carrying a quarantine attribute, which a
   locally built app does not have.
 - The bundle identifier is set in `build.sh`. Change it there if you want your own.
+- **Install it on your internal disk.** Running the app from an external or removable volume
+  will crash it with `SIGBUS` the moment that volume sleeps or disconnects, because macOS can
+  no longer page in the executable. `cp -R dist/ClaudeUsage.app /Applications/` and run it from
+  there.
 - This is an unofficial tool and is not affiliated with Anthropic. The usage endpoint is not a
   documented public API and could change.
 
