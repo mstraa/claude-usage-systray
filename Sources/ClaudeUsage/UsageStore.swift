@@ -17,12 +17,17 @@ final class UsageStore: ObservableObject {
     /// Bumped on a timer so relative times ("in 2h13m") re-render without a network call.
     @Published private(set) var clockTick = 0
 
-    /// Background cadence, deliberately slow. The endpoint rate-limits hard: a 60s poll
-    /// exhausted it, and even a 5-minute poll (12 requests/hour) tripped it again overnight.
-    /// Claude Code polls the same endpoint on the same account, so this app's requests are
-    /// additive. Freshness comes from `onDemandFreshness` instead, which costs a request only
-    /// when the user is actually looking.
-    static let pollInterval: TimeInterval = 900
+    /// Cadence while the figures are visibly moving: the user is working, so the menu bar
+    /// has to track it or it reads as dead.
+    static let activePollInterval: TimeInterval = 240
+    /// Cadence once the figures have stopped moving. Polling an unchanging number costs
+    /// requests and buys nothing — and the endpoint rate-limits hard, with Claude Code
+    /// polling it on the same account, so idle load is what should be cut.
+    static let idlePollInterval: TimeInterval = 900
+    /// Consecutive unchanged polls before dropping to the idle cadence.
+    private static let unchangedPollsBeforeSlowing = 2
+    /// Starting point for the failure backoff.
+    static let backoffBase: TimeInterval = 300
     /// Opening the dropdown refetches only if the figures are older than this.
     static let onDemandFreshness: TimeInterval = 120
     /// Ceiling for the exponential backoff after repeated failures.
@@ -36,6 +41,8 @@ final class UsageStore: ObservableObject {
     private var inFlight: Task<Void, Never>?
     private var consecutiveFailures = 0
     private var lastAttemptAt: Date?
+    /// Drives the active/idle cadence switch.
+    private var unchangedPolls = 0
     /// Hard gate after a failure: nothing fetches before this, not even the user, because
     /// extra requests at a rate-limited endpoint only prolong the block.
     private var backoffUntil = Date.distantPast
@@ -137,12 +144,17 @@ final class UsageStore: ObservableObject {
 
     private func apply(_ result: Result<UsageSnapshot, Error>) {
         switch result {
-        case .success(let snapshot):
-            self.snapshot = snapshot
+        case .success(let fresh):
+            // Compared before the assignment, so this sees the previous figures.
+            unchangedPolls = Self.figuresMoved(from: snapshot, to: fresh) ? 0 : unchangedPolls + 1
+            snapshot = fresh
             lastError = nil
             consecutiveFailures = 0
             backoffUntil = .distantPast
-            nextScheduledFetch = Date().addingTimeInterval(Self.pollInterval)
+            let interval = unchangedPolls >= Self.unchangedPollsBeforeSlowing
+                ? Self.idlePollInterval
+                : Self.activePollInterval
+            nextScheduledFetch = Date().addingTimeInterval(interval)
             nextFetchAt = nextScheduledFetch
 
         case .failure(let error):
@@ -166,9 +178,17 @@ final class UsageStore: ObservableObject {
     /// retried forever at the same cadence, which is what keeps the block alive.
     private func backoffDelay(for error: UsageError) -> TimeInterval {
         if case .rateLimited(let retryAfter) = error, let retryAfter {
-            return min(max(retryAfter, Self.pollInterval), Self.maxBackoff)
+            return min(max(retryAfter, Self.backoffBase), Self.maxBackoff)
         }
         let exponent = min(max(consecutiveFailures - 1, 0), 8)
-        return min(Self.pollInterval * pow(2, Double(exponent)), Self.maxBackoff)
+        return min(Self.backoffBase * pow(2, Double(exponent)), Self.maxBackoff)
+    }
+
+    /// Whether either headline figure changed, which is the signal that the user is actively
+    /// consuming quota and the menu bar needs to keep up.
+    private static func figuresMoved(from old: UsageSnapshot?, to new: UsageSnapshot) -> Bool {
+        guard let old else { return true }
+        return old.session?.percent != new.session?.percent
+            || old.weeklyAll?.percent != new.weeklyAll?.percent
     }
 }
