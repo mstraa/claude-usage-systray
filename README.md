@@ -27,12 +27,12 @@ Times use a 24-hour clock: `19h` on the hour, `19h23` otherwise.
   numbers immediately instead of a blank menu bar while the first fetch is in flight — or
   failing. The cache holds percentages and timestamps only, never a credential.
 - No Dock icon and no window.
-- **Adaptive polling:** every 4 minutes while your usage is actually moving, dropping to every
-  15 minutes once the figures stop changing, and back again as soon as they move. Opening the
-  dropdown also refetches if the numbers are more than 2 minutes old. On `429` it backs off
-  exponentially up to 30 minutes and honours `Retry-After`. The usage endpoint rate-limits
-  aggressively and Claude Code polls it on the same account, so idle load is kept low without
-  making the menu bar feel dead while you work.
+- **Adaptive polling:** every 2 minutes while your usage is moving, easing to 5 minutes after
+  three unchanged polls and snapping back as soon as a figure moves. Opening the dropdown also
+  refetches anything older than a minute. The idle interval is kept close to the active one on
+  purpose — usage is bursty, and a long idle interval means the start of the next burst goes
+  unnoticed, which is exactly what makes a menu bar look frozen. On `429` it backs off
+  exponentially up to 30 minutes and honours `Retry-After`.
 
 ## Requirements
 
@@ -86,7 +86,7 @@ the `limits[]` array it returns.
 | `KeychainToken.swift` | Reads the access token from the login Keychain |
 | `UsageAPI.swift` | The HTTPS call, error typing, and a single retry on 401 |
 | `Models.swift` | Wire format, and normalising it into a display model |
-| `UsageStore.swift` | The 60-second polling loop and the last-known-good state |
+| `UsageStore.swift` | The adaptive polling loop and the last-known-good state |
 | `StatusItemController.swift` | The `NSStatusItem`, its colours, and the popover |
 | `DropdownView.swift` | The SwiftUI dropdown |
 | `Formatting.swift` | 24-hour clock, reset phrases, countdowns |

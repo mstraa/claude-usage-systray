@@ -19,17 +19,18 @@ final class UsageStore: ObservableObject {
 
     /// Cadence while the figures are visibly moving: the user is working, so the menu bar
     /// has to track it or it reads as dead.
-    static let activePollInterval: TimeInterval = 240
-    /// Cadence once the figures have stopped moving. Polling an unchanging number costs
-    /// requests and buys nothing — and the endpoint rate-limits hard, with Claude Code
-    /// polling it on the same account, so idle load is what should be cut.
-    static let idlePollInterval: TimeInterval = 900
+    static let activePollInterval: TimeInterval = 120
+    /// Cadence once the figures have stopped moving. This is capped far closer to the active
+    /// interval than pure request-thrift would suggest, because usage is bursty: a long idle
+    /// interval means the first minutes of the next burst go unnoticed, which is precisely
+    /// what makes the menu bar look like it only updates when clicked.
+    static let idlePollInterval: TimeInterval = 300
     /// Consecutive unchanged polls before dropping to the idle cadence.
-    private static let unchangedPollsBeforeSlowing = 2
+    private static let unchangedPollsBeforeSlowing = 3
     /// Starting point for the failure backoff.
     static let backoffBase: TimeInterval = 300
     /// Opening the dropdown refetches only if the figures are older than this.
-    static let onDemandFreshness: TimeInterval = 120
+    static let onDemandFreshness: TimeInterval = 60
     /// Ceiling for the exponential backoff after repeated failures.
     static let maxBackoff: TimeInterval = 1800
     /// Floor between user-initiated refreshes, so holding the button cannot hammer the API.
