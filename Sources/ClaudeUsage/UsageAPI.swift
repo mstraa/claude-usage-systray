@@ -29,6 +29,15 @@ enum UsageError: LocalizedError, Equatable {
         }
     }
 
+    /// Failures that cannot clear on their own: the app has no way back without the user
+    /// doing something, so the UI must say so rather than sit on a stale number.
+    var requiresUserAction: Bool {
+        switch self {
+        case .unauthorized, .noCredentials: return true
+        case .rateLimited, .httpStatus, .transport, .decoding, .staleCache: return false
+        }
+    }
+
     /// Whether retrying on the next poll could plausibly succeed without the user acting.
     var isTransient: Bool {
         switch self {
@@ -60,12 +69,19 @@ enum UsageAPI {
     }()
 
     static func fetch() async throws -> UsageSnapshot {
-        let token: String
+        let credential: KeychainToken.Credential
         do {
-            token = try KeychainToken.read()
+            credential = try KeychainToken.readCredential()
         } catch let error as KeychainError {
             throw UsageError.noCredentials(error.userFacingDescription)
         }
+
+        // An expired token cannot succeed, so spending a request on it only adds load to an
+        // endpoint that rate-limits hard. Report the same state the 401 would have produced.
+        if credential.isExpired {
+            throw UsageError.unauthorized
+        }
+        let token = credential.token
 
         do {
             return try await request(token: token)

@@ -81,6 +81,12 @@ final class StatusItemController {
     }
 
     private func barAppearance() -> BarAppearance {
+        // An expired sign-in is not self-healing. The figures cannot move until the user acts,
+        // so continuing to show the last percentage reads as a live reading that happens to be
+        // low — which is exactly how a frozen 0% gets mistaken for real usage.
+        if let error = store.lastError, error.requiresUserAction {
+            return BarAppearance(title: "!", severity: .warning, dimmed: false)
+        }
         guard let snapshot = store.snapshot else {
             // Nothing fetched yet. A hard failure still shows the glyph, tinted, so a
             // permanently broken state is not silently identical to a healthy idle one.

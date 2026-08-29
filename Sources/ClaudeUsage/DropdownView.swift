@@ -68,11 +68,11 @@ struct DropdownView: View {
             Button(action: { store.refresh(.manual) }) {
                 Image(systemName: "arrow.clockwise")
                     .font(.system(size: 11, weight: .medium))
-                    .opacity(store.isRefreshing || store.isBackingOff ? 0.35 : 1)
+                    .opacity(store.isRefreshing || !store.canManuallyRefresh ? 0.35 : 1)
             }
             .buttonStyle(.plain)
-            .disabled(store.isRefreshing || store.isBackingOff)
-            .help(store.isBackingOff
+            .disabled(store.isRefreshing || !store.canManuallyRefresh)
+            .help(!store.canManuallyRefresh
                   ? "Waiting out a rate limit — next attempt \(Format.relative(to: store.nextFetchAt))"
                   : "Refresh now")
         }

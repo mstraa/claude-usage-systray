@@ -46,7 +46,22 @@ enum KeychainToken {
     /// `security` exits with this when no matching item exists.
     private static let notFoundExitCode: Int32 = 44
 
+    /// The access token plus its stated expiry. `expiresAt` is a timestamp, not a secret.
+    struct Credential {
+        let token: String
+        let expiresAt: Date?
+
+        var isExpired: Bool {
+            guard let expiresAt else { return false }
+            return expiresAt <= Date()
+        }
+    }
+
     static func read() throws -> String {
+        try readCredential().token
+    }
+
+    static func readCredential() throws -> Credential {
         let payload = try runSecurityTool()
 
         // The item's account is the macOS username rather than a fixed value, and only one
@@ -57,7 +72,11 @@ enum KeychainToken {
         else {
             throw KeychainError.malformedPayload
         }
-        return token
+        // Claude Code writes milliseconds; tolerate seconds in case that ever changes.
+        let expiry = blob.claudeAiOauth?.expiresAt.map { raw -> Date in
+            Date(timeIntervalSince1970: raw > 1_000_000_000_000 ? raw / 1000 : raw)
+        }
+        return Credential(token: token, expiresAt: expiry)
     }
 
     private struct CredentialBlob: Decodable {
@@ -65,6 +84,8 @@ enum KeychainToken {
 
         struct OAuth: Decodable {
             let accessToken: String?
+            /// A timestamp, not a secret — used to skip a request that is certain to 401.
+            let expiresAt: Double?
             // refreshToken / expiresAt / scopes / subscriptionType / rateLimitTier are
             // present but intentionally not decoded — this app only ever needs the token.
         }

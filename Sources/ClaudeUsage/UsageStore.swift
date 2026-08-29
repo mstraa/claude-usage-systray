@@ -63,6 +63,11 @@ final class UsageStore: ObservableObject {
     /// True while a failure backoff is still in force, so the UI can explain why the refresh
     /// button is inert rather than appearing to ignore the click.
     var isBackingOff: Bool { Date() < backoffUntil }
+    /// Whether the refresh button would actually attempt a request.
+    var canManuallyRefresh: Bool {
+        if case .rateLimited = lastError { return !isBackingOff }
+        return true
+    }
 
     deinit {
         tickTimer?.invalidate()
@@ -111,15 +116,18 @@ final class UsageStore: ObservableObject {
         guard inFlight == nil else { return }
 
         let now = Date()
-        // No trigger may punch through an active backoff.
-        guard now >= backoffUntil else { return }
 
         switch trigger {
         case .scheduled:
-            guard now >= nextScheduledFetch else { return }
+            guard now >= backoffUntil, now >= nextScheduledFetch else { return }
         case .onDemand:
+            guard now >= backoffUntil else { return }
             if let snapshot, now.timeIntervalSince(snapshot.fetchedAt) < Self.onDemandFreshness { return }
         case .manual:
+            // A rate limit is the one failure a manual retry can genuinely make worse, so it
+            // is the only one that blocks the button. After fixing an expired sign-in the user
+            // must not be made to wait out a 30-minute backoff they can do nothing about.
+            if case .rateLimited = lastError, now < backoffUntil { return }
             if let last = lastAttemptAt, now.timeIntervalSince(last) < Self.manualRefreshFloor { return }
         }
 
