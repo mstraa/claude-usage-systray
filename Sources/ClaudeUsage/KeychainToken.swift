@@ -38,7 +38,7 @@ enum KeychainError: LocalizedError {
 ///
 /// `/usr/bin/security` has a stable Apple code identity, so it stays trusted permanently and
 /// reads the item silently, with no prompt. Access is strictly read-only: this app never
-/// writes credentials and never refreshes the token.
+/// writes credentials and never refreshes the token itself (see `TokenRefresher`).
 enum KeychainToken {
 
     static let service = "Claude Code-credentials"

@@ -85,6 +85,7 @@ the `limits[]` array it returns.
 | --- | --- |
 | `KeychainToken.swift` | Reads the access token from the login Keychain |
 | `UsageAPI.swift` | The HTTPS call, error typing, and a single retry on 401 |
+| `TokenRefresher.swift` | Runs Claude Code briefly in the background to renew an expired token |
 | `Models.swift` | Wire format, and normalising it into a display model |
 | `UsageStore.swift` | The adaptive polling loop and the last-known-good state |
 | `StatusItemController.swift` | The `NSStatusItem`, its colours, and the popover |
@@ -100,8 +101,16 @@ coding.
 
 **This app does not sign in, refresh tokens, or store credentials of its own.** It reads the token
 Claude Code already holds, sends it only to `api.anthropic.com`, and keeps it in memory. Token
-refresh stays Claude Code's job; if the token has expired the app says so and points you back to
-Claude Code.
+refresh stays Claude Code's job.
+
+When the token has expired, the app gets Claude Code to do that job: it launches `claude` headless
+in the background, with stdin held open and no message ever sent, waits for the new token to appear
+in the Keychain (normally under two seconds), then terminates it. Claude Code renews its credentials
+on startup, so no prompt reaches the model and no quota is spent. The launch uses a temporary
+directory, `--strict-mcp-config` and `--no-session-persistence`, so it starts none of your MCP
+servers and leaves no transcript — but your `SessionStart` hooks do run. It happens at most once
+every two minutes. If Claude Code is not installed in a usual location, or the sign-in is too old
+for it to renew, the app says so and points you back to Claude Code.
 
 It decodes only `accessToken` — never the refresh token — and never logs it, writes it to disk, or
 puts it in an error message or a URL.

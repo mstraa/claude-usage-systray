@@ -15,7 +15,7 @@ enum UsageError: LocalizedError, Equatable {
         case .noCredentials(let detail):
             return detail
         case .unauthorized:
-            return "Sign-in expired. Open Claude Code to refresh it."
+            return "Sign-in expired and could not be renewed. Open Claude Code to sign in."
         case .rateLimited:
             return "Rate limited by the usage API."
         case .staleCache:
@@ -48,8 +48,9 @@ enum UsageError: LocalizedError, Equatable {
 }
 
 /// Reads the rolling rate-limit windows from the same endpoint Claude Code's own `/usage`
-/// screen uses. Strictly read-only: this app never writes credentials and never attempts to
-/// refresh the OAuth token itself — that remains Claude Code's job.
+/// screen uses. Strictly read-only: this app never writes credentials and never refreshes the
+/// OAuth token itself — that remains Claude Code's job, which `TokenRefresher` triggers when
+/// the token has expired.
 enum UsageAPI {
 
     static let endpoint = URL(string: "https://api.anthropic.com/api/oauth/usage")!
@@ -69,7 +70,7 @@ enum UsageAPI {
     }()
 
     static func fetch() async throws -> UsageSnapshot {
-        let credential: KeychainToken.Credential
+        var credential: KeychainToken.Credential
         do {
             credential = try KeychainToken.readCredential()
         } catch let error as KeychainError {
@@ -77,9 +78,13 @@ enum UsageAPI {
         }
 
         // An expired token cannot succeed, so spending a request on it only adds load to an
-        // endpoint that rate-limits hard. Report the same state the 401 would have produced.
+        // endpoint that rate-limits hard. Have Claude Code renew it first; if that does not
+        // work, report the same state the 401 would have produced.
         if credential.isExpired {
-            throw UsageError.unauthorized
+            guard let renewed = await TokenRefresher.renew(replacing: credential) else {
+                throw UsageError.unauthorized
+            }
+            credential = renewed
         }
         let token = credential.token
 
