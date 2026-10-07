@@ -13,10 +13,6 @@ final class StatusItemController {
     private var outsideClickMonitor: Any?
     private var escapeKeyMonitor: Any?
 
-    /// Candidates in preference order; the first one this OS actually provides wins, so a
-    /// symbol missing on an older macOS degrades to a plain text label instead of nothing.
-    private static let symbolCandidates = ["asterisk", "sparkle", "chart.bar.fill", "gauge"]
-
     init(store: UsageStore) {
         self.store = store
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -71,11 +67,12 @@ final class StatusItemController {
 
     // MARK: - Rendering
 
-    /// What the menu bar should show right now, resolved in one place so the label, the
-    /// glyph and their colour cannot disagree.
+    /// What the menu bar should show right now, resolved in one place so the label and the
+    /// ring cannot disagree.
     private struct BarAppearance {
         let title: String
-        let severity: Severity
+        /// How much of the weekly window is used, 0...1; `nil` when it is not known.
+        let weeklyFraction: Double?
         /// The numbers are real but no longer known to be current.
         let dimmed: Bool
     }
@@ -85,26 +82,33 @@ final class StatusItemController {
         // so continuing to show the last percentage reads as a live reading that happens to be
         // low — which is exactly how a frozen 0% gets mistaken for real usage.
         if let error = store.lastError, error.requiresUserAction {
-            return BarAppearance(title: "!", severity: .warning, dimmed: false)
+            return BarAppearance(title: "!", weeklyFraction: nil, dimmed: false)
         }
         guard let snapshot = store.snapshot else {
-            // Nothing fetched yet. A hard failure still shows the glyph, tinted, so a
-            // permanently broken state is not silently identical to a healthy idle one.
-            return BarAppearance(title: "", severity: store.lastError == nil ? .normal : .warning,
-                                 dimmed: false)
-        }
-        guard let session = snapshot.session else {
-            return BarAppearance(title: "—", severity: snapshot.overallSeverity, dimmed: store.isStale)
+            return BarAppearance(title: "", weeklyFraction: nil, dimmed: false)
         }
 
         let stale = store.isStale
-        let resetPassed = session.resetsAt.map { $0 <= Date() } ?? false
+        let now = Date()
+
+        // Same reasoning as the session below: a stale weekly figure whose window has rolled
+        // is unknowable, so the ring goes empty rather than keep the previous week's arc.
+        let weeklyFraction = snapshot.weeklyAll.flatMap { weekly -> Double? in
+            let rolled = weekly.resetsAt.map { $0 <= now } ?? false
+            return stale && rolled ? nil : weekly.fraction
+        }
+
+        guard let session = snapshot.session else {
+            return BarAppearance(title: "—", weeklyFraction: weeklyFraction, dimmed: stale)
+        }
+
+        let resetPassed = session.resetsAt.map { $0 <= now } ?? false
 
         // Past its own reset with no successful refresh, the percentage is not merely old —
         // the window has rolled and the real figure is unknowable, so showing the previous
-        // number (possibly in red) would be actively wrong.
+        // number would be actively wrong.
         if stale && resetPassed {
-            return BarAppearance(title: "—", severity: .normal, dimmed: true)
+            return BarAppearance(title: "—", weeklyFraction: weeklyFraction, dimmed: true)
         }
 
         var title = Format.percent(session.percent)
@@ -113,16 +117,15 @@ final class StatusItemController {
         if let resetsAt = session.resetsAt, !resetPassed {
             title += " · " + Format.clock(resetsAt)
         }
-        return BarAppearance(title: title, severity: snapshot.overallSeverity, dimmed: stale)
+        return BarAppearance(title: title, weeklyFraction: weeklyFraction, dimmed: stale)
     }
 
     private func render() {
         guard let button = statusItem.button else { return }
 
         let appearance = barAppearance()
-        let color = barColor(for: appearance)
 
-        button.image = symbolImage(appearance: appearance, color: color)
+        button.image = ringImage(fraction: appearance.weeklyFraction, dimmed: appearance.dimmed)
         // Assigning `button.title` after this would silently wipe the colour: the two
         // properties share storage.
         button.attributedTitle = NSAttributedString(
@@ -131,44 +134,45 @@ final class StatusItemController {
                 // The menu bar font has proportional digits, so the label visibly jitters as
                 // the numbers change. Monospaced digits keep the width stable.
                 .font: NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .regular),
-                .foregroundColor: color,
+                // Dynamic colours resolve at draw time against the *button's* appearance, which
+                // tracks the menu bar rather than the system theme.
+                .foregroundColor: appearance.dimmed ? NSColor.secondaryLabelColor : NSColor.labelColor,
             ]
         )
         button.toolTip = tooltip()
     }
 
-    private func barColor(for appearance: BarAppearance) -> NSColor {
-        switch (appearance.severity, appearance.dimmed) {
-        // Dynamic colours resolve at draw time against the *button's* appearance, which
-        // tracks the menu bar rather than the system theme.
-        case (.normal, false): return .labelColor
-        case (.normal, true): return .secondaryLabelColor
-        case (.warning, let dimmed): return dimmed ? .systemOrange.withAlphaComponent(0.55) : .systemOrange
-        case (.critical, let dimmed): return dimmed ? .systemRed.withAlphaComponent(0.55) : .systemRed
+    /// A ring whose arc, clockwise from 12 o'clock, is the share of the weekly window used.
+    private func ringImage(fraction: Double?, dimmed: Bool) -> NSImage {
+        let side: CGFloat = 14
+        let lineWidth: CGFloat = 2
+        // A template image is tinted by the menu bar itself and only its alpha survives, so
+        // the track and the dimmed state are expressed as opacity rather than as colours.
+        let strength: CGFloat = dimmed ? 0.55 : 1
+
+        let image = NSImage(size: NSSize(width: side, height: side), flipped: false) { rect in
+            let center = NSPoint(x: rect.midX, y: rect.midY)
+            let radius = (side - lineWidth) / 2
+
+            let track = NSBezierPath()
+            track.appendArc(withCenter: center, radius: radius, startAngle: 0, endAngle: 360)
+            track.lineWidth = lineWidth
+            NSColor.black.withAlphaComponent(0.25 * strength).setStroke()
+            track.stroke()
+
+            if let fraction, fraction > 0 {
+                let arc = NSBezierPath()
+                arc.appendArc(withCenter: center, radius: radius,
+                              startAngle: 90, endAngle: 90 - 360 * CGFloat(fraction), clockwise: true)
+                arc.lineWidth = lineWidth
+                arc.lineCapStyle = .round
+                NSColor.black.withAlphaComponent(strength).setStroke()
+                arc.stroke()
+            }
+            return true
         }
-    }
-
-    private func symbolImage(appearance: BarAppearance, color: NSColor) -> NSImage? {
-        let base = Self.symbolCandidates.lazy
-            .compactMap { NSImage(systemSymbolName: $0, accessibilityDescription: "Claude usage") }
-            .first
-        guard let base else { return nil }
-
-        let sizing = NSImage.SymbolConfiguration(pointSize: 12, weight: .medium)
-
-        if appearance.severity == .normal && !appearance.dimmed {
-            // A template image is tinted by the menu bar itself, which is exactly the
-            // behaviour wanted for the neutral state in both light and dark.
-            let image = base.withSymbolConfiguration(sizing) ?? base
-            image.isTemplate = true
-            return image
-        }
-
-        // A template image ignores an explicit tint, and `hierarchicalColor` renders
-        // secondary layers so faintly the glyph looks washed out at this size.
-        let palette = NSImage.SymbolConfiguration(paletteColors: [color])
-        let image = base.withSymbolConfiguration(sizing.applying(palette)) ?? base
-        image.isTemplate = false
+        image.isTemplate = true
+        image.accessibilityDescription = "Claude usage"
         return image
     }
 
@@ -186,9 +190,8 @@ final class StatusItemController {
         var lines: [String] = []
         if let session = snapshot.session { lines.append(line("Session (5h)", session)) }
         if let weekly = snapshot.weeklyAll { lines.append(line("Week", weekly)) }
-        // Scoped windows feed `overallSeverity` too, so whichever one coloured the menu bar
-        // has to be named here or the colour reads as unexplained. Only the non-normal ones,
-        // so an account with many models does not get a wall of 1% rows.
+        // Only the scoped windows running high, so an account with many models does not get
+        // a wall of 1% rows.
         for scoped in snapshot.weeklyScoped where scoped.severity != .normal {
             lines.append(line("Week (\(scoped.label))", scoped))
         }
