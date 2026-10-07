@@ -60,15 +60,6 @@ struct UsageSnapshot: Equatable, Codable {
     var fetchedAt: Date
 
     var isEmpty: Bool { session == nil && weeklyAll == nil && weeklyScoped.isEmpty }
-
-    /// Worst severity anywhere in the snapshot, used to tint the menu bar.
-    var overallSeverity: Severity {
-        var worst = Severity.normal
-        for limit in ([session, weeklyAll].compactMap { $0 } + weeklyScoped) {
-            worst = max(worst, limit.severity)
-        }
-        return worst
-    }
 }
 
 // MARK: - Wire format
